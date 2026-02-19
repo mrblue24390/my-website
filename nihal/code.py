@@ -1,825 +1,355 @@
+#!/usr/bin/env python3
 """
-================================================================================
-PASSWORD STRENGTH CHECKER
-Version: 2.0
-================================================================================
-This tool evaluates password strength based on multiple security criteria
-and provides actionable feedback for improvement.
-================================================================================
+Educational Packet Sniffer
+FOR AUTHORIZED EDUCATIONAL USE ONLY
+
+Usage:
+    sudo python3 packet_sniffer.py [--interface INTERFACE] [--filter PROTOCOL] [--count NUM]
+    
+Examples:
+    sudo python3 packet_sniffer.py
+    sudo python3 packet_sniffer.py --interface eth0 --filter tcp --count 10
 """
 
-import re
-import string
-import math
+import argparse
+import socket
+import struct
+import textwrap
 from datetime import datetime
-from typing import Dict, List, Tuple
+import sys
+import os
+import signal
 
-# ============================================================================
-# SECTION 1: PASSWORD CHECKING FUNCTIONS
-# ============================================================================
+# Ethical usage warning
+def display_ethical_warning():
+    print("=" * 70)
+    print("EDUCATIONAL PACKET SNIFFER - FOR AUTHORIZED USE ONLY")
+    print("=" * 70)
+    print("\nETHICAL USAGE WARNING:")
+    print("1. Only use on networks you own or have explicit permission to monitor")
+    print("2. Do not capture sensitive information (passwords, personal data)")
+    print("3. This tool is for educational purposes only")
+    print("4. Unauthorized network monitoring may be illegal")
+    print("=" * 70)
+    
+    response = input("\nDo you agree to use this tool ethically? (yes/no): ")
+    if response.lower() != 'yes':
+        print("Exiting...")
+        sys.exit(0)
+    print("\n")
 
-def check_length(password: str) -> Tuple[int, int, str]:
-    """
-    Check password length and award points.
-    
-    SCORING:
-    - 0-7 chars: 0 points
-    - 8-11 chars: 10 points
-    - 12-15 chars: 20 points
-    - 16-19 chars: 30 points
-    - 20+ chars: 40 points
-    
-    Returns: (points, max_points, feedback)
-    """
-    length = len(password)
-    
-    if length == 0:
-        return 0, 40, "❌ No password entered"
-    elif length < 8:
-        return 0, 40, f"❌ Too short ({length} chars). Minimum 8 characters required."
-    elif length < 12:
-        return 10, 40, f"⚠️  Minimum length ({length} chars). Consider 12+ characters."
-    elif length < 16:
-        return 20, 40, f"✓ Good length ({length} chars)"
-    elif length < 20:
-        return 30, 40, f"✓ Very good length ({length} chars)"
-    else:
-        return 40, 40, f"✅ Excellent length ({length} chars)"
-
-
-def check_character_types(password: str) -> Tuple[int, int, List[str]]:
-    """
-    Check for presence of different character types.
-    
-    Points per character type: 15 points each (60 total)
-    Types: Uppercase, Lowercase, Numbers, Special characters
-    
-    Returns: (points, max_points, feedback_list)
-    """
-    points = 0
-    max_points = 60
-    feedback = []
-    
-    # Check for uppercase letters
-    if re.search(r'[A-Z]', password):
-        points += 15
-        feedback.append("✅ Contains uppercase letters")
-    else:
-        feedback.append("❌ Add uppercase letters (A-Z)")
-    
-    # Check for lowercase letters
-    if re.search(r'[a-z]', password):
-        points += 15
-        feedback.append("✅ Contains lowercase letters")
-    else:
-        feedback.append("❌ Add lowercase letters (a-z)")
-    
-    # Check for numbers
-    if re.search(r'[0-9]', password):
-        points += 15
-        feedback.append("✅ Contains numbers")
-    else:
-        feedback.append("❌ Add numbers (0-9)")
-    
-    # Check for special characters
-    special_chars = r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]'
-    if re.search(special_chars, password):
-        points += 15
-        feedback.append("✅ Contains special characters")
-    else:
-        feedback.append("❌ Add special characters (!@#$% etc.)")
-    
-    return points, max_points, feedback
-
-
-def check_common_patterns(password: str) -> Tuple[int, int, List[str]]:
-    """
-    Check for common weak patterns.
-    
-    Deducts points for bad patterns:
-    - Common sequences: -5 each
-    - Common passwords: -10
-    - Personal info patterns: -5
-    
-    Returns: (points_deducted, max_penalty, feedback)
-    """
-    points_lost = 0
-    max_penalty = 30
-    feedback = []
-    
-    # Common sequences to check (reverse included too)
-    sequences = [
-        '123', '234', '345', '456', '567', '678', '789', '890',
-        'abc', 'bcd', 'cde', 'def', 'efg', 'fgh', 'ghi', 'hij',
-        'ijk', 'jkl', 'klm', 'lmn', 'mno', 'nop', 'opq', 'pqr',
-        'qrs', 'rst', 'stu', 'tuv', 'uvw', 'vwx', 'wxy', 'xyz',
-        'qwerty', 'asdfgh', 'zxcvbn', 'password'
-    ]
-    
-    # Check for sequences
-    password_lower = password.lower()
-    for seq in sequences:
-        if seq in password_lower or seq[::-1] in password_lower:
-            points_lost += 5
-            feedback.append(f"⚠️  Contains common sequence: '{seq}'")
-            break  # Only penalize once
-    
-    # Check for common passwords
-    common_passwords = [
-        'password', '123456', 'qwerty', 'admin', 'welcome',
-        'monkey', 'dragon', 'letmein', 'password1', 'abc123'
-    ]
-    
-    if password_lower in common_passwords:
-        points_lost += 10
-        feedback.append(f"❌ Very common password: '{password}'")
-    
-    # Check for repeated characters
-    if re.search(r'(.)\1{2,}', password):
-        points_lost += 5
-        feedback.append("⚠️  Contains repeated characters (aaa, 111, etc.)")
-    
-    # Check for personal info patterns (simple check)
-    personal_patterns = [
-        r'\d{4}$',  # Year at end (1990, 2023)
-        r'^\d{4}',  # Year at start
-        r'\d{6}$',  # Date pattern (010190)
-    ]
-    
-    for pattern in personal_patterns:
-        if re.search(pattern, password):
-            points_lost += 5
-            feedback.append("⚠️  Might contain personal info (birth year/date)")
-            break
-    
-    return points_lost, max_penalty, feedback
-
-
-def check_entropy(password: str) -> Tuple[int, int, str]:
-    """
-    Calculate password entropy (measure of randomness).
-    
-    Entropy = log2(charset_size ^ length)
-    Higher entropy = more secure
-    
-    Returns: (points, max_points, feedback)
-    """
-    length = len(password)
-    
-    # Determine charset size
-    charset = 0
-    
-    if re.search(r'[a-z]', password):
-        charset += 26  # lowercase
-    if re.search(r'[A-Z]', password):
-        charset += 26  # uppercase
-    if re.search(r'[0-9]', password):
-        charset += 10  # digits
-    if re.search(r'[^a-zA-Z0-9]', password):
-        # Special characters (approximately 32 common ones)
-        charset += 32
-    
-    # If charset is 0 (empty password)
-    if charset == 0:
-        return 0, 20, "❌ No characters detected"
-    
-    # Calculate entropy
-    entropy = math.log2(charset ** length)
-    
-    # Convert entropy to points (0-20 scale)
-    if entropy < 28:  # Very weak
-        points = 0
-        feedback = f"❌ Very low entropy ({entropy:.1f} bits)"
-    elif entropy < 36:  # Weak
-        points = 5
-        feedback = f"⚠️  Low entropy ({entropy:.1f} bits)"
-    elif entropy < 45:  # Medium
-        points = 10
-        feedback = f"✓ Moderate entropy ({entropy:.1f} bits)"
-    elif entropy < 55:  # Strong
-        points = 15
-        feedback = f"✓ Good entropy ({entropy:.1f} bits)"
-    else:  # Very strong
-        points = 20
-        feedback = f"✅ Excellent entropy ({entropy:.1f} bits)"
-    
-    return points, 20, feedback
-
-
-def check_uniqueness(password: str, previous_passwords: List[str] = None) -> Tuple[int, int, str]:
-    """
-    Check if password is similar to previous passwords.
-    
-    Returns: (points, max_points, feedback)
-    """
-    if previous_passwords is None:
-        previous_passwords = []
-    
-    # Simple similarity check (you can expand this)
-    password_lower = password.lower()
-    
-    for prev_pass in previous_passwords:
-        prev_lower = prev_pass.lower()
+class EthicalPacketSniffer:
+    def __init__(self, interface=None, protocol_filter=None, packet_count=50):
+        self.interface = interface
+        self.protocol_filter = protocol_filter.lower() if protocol_filter else None
+        self.packet_count = packet_count
+        self.captured_count = 0
         
-        # Check for exact match
-        if password_lower == prev_lower:
-            return 0, 10, "❌ Password reused from previous check"
-        
-        # Check for high similarity (80%+ same)
-        if len(password_lower) > 5 and len(prev_lower) > 5:
-            # Simple similarity check
-            common_chars = sum(1 for c in password_lower if c in prev_lower)
-            similarity = common_chars / max(len(password_lower), len(prev_lower))
-            
-            if similarity > 0.7:
-                return 5, 10, "⚠️  Similar to previous password"
-    
-    return 10, 10, "✅ Unique password"
-
-
-# ============================================================================
-# SECTION 2: MAIN ASSESSMENT FUNCTION
-# ============================================================================
-
-def assess_password_strength(password: str, previous_passwords: List[str] = None) -> Dict:
-    """
-    Main function to assess password strength.
-    
-    Returns a dictionary with:
-    - total_score: 0-100
-    - strength_level: Very Weak/Weak/Medium/Strong/Very Strong
-    - detailed_feedback: List of improvement suggestions
-    - breakdown: Score breakdown by category
-    - time_to_crack: Estimated cracking time
-    """
-    
-    if previous_passwords is None:
-        previous_passwords = []
-    
-    # Initialize results
-    results = {
-        'password': password,
-        'length': len(password),
-        'total_score': 0,
-        'max_score': 150,  # Sum of all max points
-        'strength_level': '',
-        'detailed_feedback': [],
-        'breakdown': {},
-        'time_to_crack': '',
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    
-    # 1. Check length
-    length_points, length_max, length_feedback = check_length(password)
-    results['breakdown']['length'] = {
-        'points': length_points,
-        'max': length_max,
-        'feedback': length_feedback
-    }
-    results['total_score'] += length_points
-    
-    # 2. Check character types
-    char_points, char_max, char_feedback = check_character_types(password)
-    results['breakdown']['character_types'] = {
-        'points': char_points,
-        'max': char_max,
-        'feedback': char_feedback
-    }
-    results['total_score'] += char_points
-    
-    # 3. Check for common patterns (deduct points)
-    pattern_penalty, pattern_max, pattern_feedback = check_common_patterns(password)
-    results['breakdown']['pattern_check'] = {
-        'points_lost': pattern_penalty,
-        'max_penalty': pattern_max,
-        'feedback': pattern_feedback
-    }
-    results['total_score'] -= pattern_penalty
-    
-    # 4. Check entropy
-    entropy_points, entropy_max, entropy_feedback = check_entropy(password)
-    results['breakdown']['entropy'] = {
-        'points': entropy_points,
-        'max': entropy_max,
-        'feedback': entropy_feedback
-    }
-    results['total_score'] += entropy_points
-    
-    # 5. Check uniqueness
-    unique_points, unique_max, unique_feedback = check_uniqueness(password, previous_passwords)
-    results['breakdown']['uniqueness'] = {
-        'points': unique_points,
-        'max': unique_max,
-        'feedback': unique_feedback
-    }
-    results['total_score'] += unique_points
-    
-    # Ensure score doesn't go negative
-    results['total_score'] = max(0, results['total_score'])
-    
-    # Calculate percentage score (0-100)
-    percentage_score = (results['total_score'] / 150) * 100
-    
-    # Determine strength level
-    if percentage_score < 30:
-        strength = "Very Weak"
-        color = "🔴"
-    elif percentage_score < 50:
-        strength = "Weak"
-        color = "🟠"
-    elif percentage_score < 70:
-        strength = "Medium"
-        color = "🟡"
-    elif percentage_score < 85:
-        strength = "Strong"
-        color = "🟢"
-    else:
-        strength = "Very Strong"
-        color = "💪"
-    
-    results['strength_level'] = f"{color} {strength}"
-    results['percentage_score'] = round(percentage_score, 1)
-    
-    # Compile all feedback
-    all_feedback = []
-    
-    # Add length feedback
-    if isinstance(length_feedback, str):
-        all_feedback.append(length_feedback)
-    
-    # Add character type feedback
-    all_feedback.extend(char_feedback)
-    
-    # Add pattern feedback
-    all_feedback.extend(pattern_feedback)
-    
-    # Add entropy feedback
-    all_feedback.append(entropy_feedback)
-    
-    # Add uniqueness feedback
-    all_feedback.append(unique_feedback)
-    
-    results['detailed_feedback'] = all_feedback
-    
-    # Estimate time to crack
-    results['time_to_crack'] = estimate_crack_time(password, percentage_score)
-    
-    return results
-
-
-def estimate_crack_time(password: str, strength_score: float) -> str:
-    """
-    Estimate time to crack password (simplified).
-    
-    Note: This is a simplified estimation for educational purposes.
-    Real cracking time depends on many factors including hardware,
-    algorithm, and attacker resources.
-    """
-    length = len(password)
-    
-    # Very rough estimation based on length and complexity
-    charset_size = 0
-    if re.search(r'[a-z]', password):
-        charset_size += 26
-    if re.search(r'[A-Z]', password):
-        charset_size += 26
-    if re.search(r'[0-9]', password):
-        charset_size += 10
-    if re.search(r'[^a-zA-Z0-9]', password):
-        charset_size += 32
-    
-    # If no charset detected (empty or weird characters)
-    if charset_size == 0:
-        charset_size = 1
-    
-    # Total possible combinations
-    total_combinations = charset_size ** length
-    
-    # Assume 10 billion guesses per second (modern GPU)
-    guesses_per_second = 10_000_000_000
-    
-    seconds_to_crack = total_combinations / guesses_per_second
-    
-    # Convert to human readable time
-    if seconds_to_crack < 1:
-        return "Instantly"
-    elif seconds_to_crack < 60:
-        return f"{seconds_to_crack:.0f} seconds"
-    elif seconds_to_crack < 3600:
-        minutes = seconds_to_crack / 60
-        return f"{minutes:.0f} minutes"
-    elif seconds_to_crack < 86400:
-        hours = seconds_to_crack / 3600
-        return f"{hours:.0f} hours"
-    elif seconds_to_crack < 31536000:  # Less than 1 year
-        days = seconds_to_crack / 86400
-        return f"{days:.0f} days"
-    elif seconds_to_crack < 3153600000:  # Less than 100 years
-        years = seconds_to_crack / 31536000
-        return f"{years:.1f} years"
-    else:
-        return "Centuries"
-
-
-# ============================================================================
-# SECTION 3: VISUAL DISPLAY FUNCTIONS
-# ============================================================================
-
-def display_strength_meter(score: float) -> str:
-    """
-    Create a visual strength meter.
-    
-    Returns: ASCII progress bar
-    """
-    filled_length = int(round(score / 100 * 40))
-    bar = '█' * filled_length + '░' * (40 - filled_length)
-    
-    # Color code based on score
-    if score < 30:
-        color_code = "31"  # Red
-    elif score < 50:
-        color_code = "33"  # Yellow
-    elif score < 70:
-        color_code = "93"  # Light yellow
-    elif score < 85:
-        color_code = "32"  # Green
-    else:
-        color_code = "92"  # Light green
-    
-    return f"\033[{color_code}m[{bar}]\033[0m {score:.1f}%"
-
-
-def display_results(results: Dict):
-    """
-    Display assessment results in a user-friendly format.
-    """
-    password = results['password']
-    strength = results['strength_level']
-    score = results['percentage_score']
-    
-    print("\n" + "="*70)
-    print("                    PASSWORD STRENGTH REPORT")
-    print("="*70)
-    
-    # Display password (masked for security)
-    masked_password = password[0] + "*" * (len(password) - 2) + password[-1] if len(password) > 2 else "***"
-    print(f"\n🔐 Password: {masked_password}")
-    print(f"📏 Length: {results['length']} characters")
-    
-    # Display strength meter
-    print(f"\n📊 Strength: {strength}")
-    print(f"   {display_strength_meter(score)}")
-    
-    # Display score breakdown
-    print("\n" + "-"*70)
-    print("📈 SCORE BREAKDOWN")
-    print("-"*70)
-    
-    breakdown = results['breakdown']
-    
-    print(f"\n1. Length Check: {breakdown['length']['points']}/{breakdown['length']['max']} points")
-    print(f"   ➤ {breakdown['length']['feedback']}")
-    
-    print(f"\n2. Character Types: {breakdown['character_types']['points']}/{breakdown['character_types']['max']} points")
-    for fb in breakdown['character_types']['feedback'][:2]:  # Show first 2
-        print(f"   ➤ {fb}")
-    if len(breakdown['character_types']['feedback']) > 2:
-        print(f"   ... and {len(breakdown['character_types']['feedback'])-2} more")
-    
-    if breakdown['pattern_check']['points_lost'] > 0:
-        print(f"\n3. Pattern Check: -{breakdown['pattern_check']['points_lost']} points")
-        for fb in breakdown['pattern_check']['feedback']:
-            print(f"   ➤ {fb}")
-    
-    print(f"\n4. Entropy (Randomness): {breakdown['entropy']['points']}/{breakdown['entropy']['max']} points")
-    print(f"   ➤ {breakdown['entropy']['feedback']}")
-    
-    print(f"\n5. Uniqueness: {breakdown['uniqueness']['points']}/{breakdown['uniqueness']['max']} points")
-    print(f"   ➤ {breakdown['uniqueness']['feedback']}")
-    
-    # Display crack time estimation
-    print("\n" + "-"*70)
-    print("⏱️  SECURITY ESTIMATE")
-    print("-"*70)
-    print(f"\nEstimated time to crack: {results['time_to_crack']}")
-    print("(Based on 10 billion guesses/second with modern hardware)")
-    
-    # Display improvement suggestions
-    print("\n" + "-"*70)
-    print("💡 IMPROVEMENT SUGGESTIONS")
-    print("-"*70)
-    
-    # Collect suggestions from low-scoring areas
-    suggestions = []
-    
-    if breakdown['length']['points'] < 20:
-        suggestions.append("• Increase length to at least 16 characters")
-    
-    if breakdown['character_types']['points'] < 45:
-        suggestions.append("• Include ALL character types: uppercase, lowercase, numbers, and special characters")
-    
-    if breakdown['pattern_check']['points_lost'] > 0:
-        suggestions.append("• Avoid common words, sequences, or patterns")
-    
-    if breakdown['entropy']['points'] < 10:
-        suggestions.append("• Make password more random (avoid dictionary words)")
-    
-    if not suggestions:  # If password is already strong
-        suggestions.append("✅ Your password meets all basic security criteria!")
-        suggestions.append("• Consider using a password manager")
-        suggestions.append("• Enable two-factor authentication where available")
-    
-    for i, suggestion in enumerate(suggestions, 1):
-        print(f"{i}. {suggestion}")
-    
-    print("\n" + "="*70)
-
-
-# ============================================================================
-# SECTION 4: PASSWORD GENERATOR (BONUS FEATURE)
-# ============================================================================
-
-def generate_strong_password(length: int = 16) -> str:
-    """
-    Generate a strong random password.
-    
-    Parameters:
-        length (int): Desired password length (default: 16)
-    
-    Returns:
-        str: Generated password
-    """
-    import secrets
-    
-    if length < 8:
-        length = 8
-        print("⚠️  Minimum length is 8 characters. Setting to 8.")
-    
-    # Define character sets
-    lowercase = string.ascii_lowercase
-    uppercase = string.ascii_uppercase
-    digits = string.digits
-    special_chars = "!@#$%^&*()_+-=[]{}|;:,.<>?"
-    
-    # Ensure at least one of each type
-    all_chars = lowercase + uppercase + digits + special_chars
-    
-    # Generate password
-    while True:
-        password = [
-            secrets.choice(lowercase),
-            secrets.choice(uppercase),
-            secrets.choice(digits),
-            secrets.choice(special_chars)
+        # Sensitive data filters (for ethical use)
+        self.sensitive_patterns = [
+            b'password', b'passwd', b'pwd', b'secret',
+            b'credit', b'card', b'ssn', b'social',
+            b'login', b'auth', b'token', b'key'
         ]
         
-        # Fill the rest with random characters
-        for _ in range(length - 4):
-            password.append(secrets.choice(all_chars))
+        signal.signal(signal.SIGINT, self.signal_handler)
         
-        # Shuffle the password
-        secrets.SystemRandom().shuffle(password)
-        password = ''.join(password)
-        
-        # Check if it meets criteria
-        if (len(password) >= length and
-            re.search(r'[a-z]', password) and
-            re.search(r'[A-Z]', password) and
-            re.search(r'[0-9]', password) and
-            re.search(r'[^a-zA-Z0-9]', password)):
-            return password
-
-
-# ============================================================================
-# SECTION 5: MAIN MENU AND USER INTERFACE
-# ============================================================================
-
-def display_banner():
-    """Display program banner."""
-    banner = """
-    ╔══════════════════════════════════════════════════════════╗
-    ║              PASSWORD STRENGTH CHECKER                   ║
-    ║                    Version 2.0                           ║
-    ╟──────────────────────────────────────────────────────────╢
-    ║  Features:                                               ║
-    ║  • Comprehensive password analysis                       ║
-    ║  • Strength scoring (0-100%)                             ║
-    ║  • Detailed improvement suggestions                      ║
-    ║  • Password generator                                    ║
-    ║  • Security time estimation                              ║
-    ╚══════════════════════════════════════════════════════════╝
-    """
-    print(banner)
-
-def display_menu():
-    """Display main menu."""
-    menu = """
-    ┌──────────────────────────────────────────────────────────┐
-    │                         MAIN MENU                        │
-    ├──────────────────────────────────────────────────────────┤
-    │  1. 🔐  Check Password Strength                          │
-    │  2. 🎲  Generate Strong Password                         │
-    │  3. 📊  View Password Guidelines                         │
-    │  4. 🧪  Test Example Passwords                           │
-    │  5. 🚪  Exit Program                                     │
-    └──────────────────────────────────────────────────────────┘
-    """
-    print(menu)
-
-def view_guidelines():
-    """Display password security guidelines."""
-    guidelines = """
-    📚 PASSWORD SECURITY GUIDELINES
-    ================================
+    def signal_handler(self, sig, frame):
+        print(f"\n\nCaptured {self.captured_count} packets. Exiting...")
+        sys.exit(0)
     
-    🎯 RECOMMENDED:
-    • Length: 12+ characters (16+ for important accounts)
-    • Mix: Uppercase + Lowercase + Numbers + Special characters
-    • Randomness: Avoid dictionary words, use random sequences
-    • Uniqueness: Different password for each account
-    • Management: Use a password manager
-    
-    🚫 AVOID:
-    • Common words: "password", "admin", "welcome"
-    • Sequences: "123456", "qwerty", "abcdef"
-    • Personal info: Name, birthdate, pet's name
-    • Short passwords: Less than 8 characters
-    • Password reuse across sites
-    
-    💡 TIPS:
-    1. Use passphrases: "CorrectHorseBatteryStaple42!"
-    2. Consider acronyms: "IW!2gtTH@2024" (I want to go to TH in 2024)
-    3. Add randomness: "Blue$42Tiger*9Coffee@15"
-    4. Regular updates: Change passwords every 90 days
-    5. Two-factor: Always enable 2FA when available
-    
-    🔐 STRONG PASSWORD EXAMPLES:
-    • L0ng$ecureP@ssw0rd!2024
-    • C0mpl3x#P@ss!Phr@se
-    • $tr0ngP@$$w0rdW1thNumb3rs
-    """
-    print(guidelines)
-
-def test_examples():
-    """Test example passwords to demonstrate tool."""
-    examples = [
-        "password",          # Very weak
-        "12345678",          # Weak
-        "Password123",       # Medium
-        "P@ssw0rd!2024",     # Strong
-        "L0ng$ecureP@ssw0rd!2024#Complex",  # Very strong
-    ]
-    
-    print("\n🧪 TESTING EXAMPLE PASSWORDS")
-    print("="*60)
-    
-    for example in examples:
-        print(f"\nTesting: {example}")
-        results = assess_password_strength(example)
-        print(f"Strength: {results['strength_level']}")
-        print(f"Score: {results['percentage_score']:.1f}%")
-        print(f"Crack time: {results['time_to_crack']}")
-        print("-"*40)
-
-def main():
-    """Main program function."""
-    display_banner()
-    
-    # Store previously checked passwords (for uniqueness check)
-    previous_passwords = []
-    
-    while True:
-        display_menu()
+    def get_interface(self):
+        """Get network interface to sniff on"""
+        if self.interface:
+            return self.interface
+            
+        # List available interfaces
+        print("Available network interfaces:")
+        interfaces = os.listdir('/sys/class/net/')
+        for i, iface in enumerate(interfaces):
+            print(f"  {i+1}. {iface}")
         
         try:
-            choice = input("\nEnter your choice (1-5): ").strip()
+            choice = int(input("\nSelect interface number: ")) - 1
+            if 0 <= choice < len(interfaces):
+                return interfaces[choice]
+        except:
+            pass
             
-            if choice == "1":
-                print("\n" + "="*60)
-                print("              PASSWORD STRENGTH CHECK")
-                print("="*60)
-                
-                # Get password (with option to hide input)
-                password = input("\nEnter password to check: ")
-                
-                if not password:
-                    print("❌ No password entered. Try again.")
-                    continue
-                
-                # Assess password
-                print("\n🔍 Analyzing password...")
-                results = assess_password_strength(password, previous_passwords)
-                
-                # Store for uniqueness check
-                previous_passwords.append(password)
-                
-                # Display results
-                display_results(results)
-                
-                # Offer to save report
-                save_report = input("\nSave report to file? (yes/no): ").lower()
-                if save_report in ['yes', 'y']:
-                    save_results_to_file(results)
-                    
-            elif choice == "2":
-                print("\n" + "="*60)
-                print("              PASSWORD GENERATOR")
-                print("="*60)
-                
-                try:
-                    length = int(input("\nEnter desired password length (8-32): ") or "16")
-                    if length < 8:
-                        length = 8
-                    elif length > 32:
-                        length = 32
-                        
-                    password = generate_strong_password(length)
-                    
-                    print(f"\n✅ Generated Password: {password}")
-                    print(f"   Length: {len(password)} characters")
-                    
-                    # Also check its strength
-                    results = assess_password_strength(password, previous_passwords)
-                    print(f"\n📊 Strength: {results['strength_level']}")
-                    print(f"   Score: {results['percentage_score']:.1f}%")
-                    
-                    # Offer to use this password
-                    use_it = input("\nUse this password? (yes/no): ").lower()
-                    if use_it in ['yes', 'y']:
-                        previous_passwords.append(password)
-                        
-                except ValueError:
-                    print("❌ Please enter a valid number")
-                    
-            elif choice == "3":
-                view_guidelines()
-                
-            elif choice == "4":
-                test_examples()
-                
-            elif choice == "5":
-                print("\n" + "="*60)
-                print("Thank you for using Password Strength Checker!")
-                print("Stay secure! 🔐")
-                print("="*60)
-                break
-                
-            else:
-                print("❌ Invalid choice! Please enter 1-5.")
-            
-            # Pause before next operation
-            if choice != "5":
-                input("\nPress Enter to continue...")
-                
-        except KeyboardInterrupt:
-            print("\n\n⚠️  Program interrupted. Exiting...")
-            break
-        except Exception as e:
-            print(f"\n❌ An error occurred: {e}")
-            input("\nPress Enter to continue...")
-
-def save_results_to_file(results: Dict):
-    """Save assessment results to a text file."""
-    filename = f"password_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        return 'eth0' if 'eth0' in interfaces else interfaces[0] if interfaces else None
     
-    try:
-        with open(filename, 'w') as f:
-            f.write("="*60 + "\n")
-            f.write("PASSWORD STRENGTH REPORT\n")
-            f.write("="*60 + "\n\n")
+    def create_socket(self):
+        """Create raw socket for packet capturing"""
+        try:
+            # Create raw socket
+            s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
             
-            f.write(f"Date: {results['timestamp']}\n")
-            f.write(f"Password Length: {results['length']} characters\n")
-            f.write(f"Strength Level: {results['strength_level']}\n")
-            f.write(f"Score: {results['percentage_score']:.1f}%\n\n")
+            # Set timeout to prevent blocking indefinitely
+            s.settimeout(2)
             
-            f.write("-"*60 + "\n")
-            f.write("DETAILED FEEDBACK\n")
-            f.write("-"*60 + "\n\n")
-            
-            for feedback in results['detailed_feedback']:
-                f.write(f"• {feedback}\n")
-            
-            f.write(f"\nEstimated crack time: {results['time_to_crack']}\n")
-            
-            f.write("\n" + "="*60 + "\n")
-            f.write("END OF REPORT\n")
-            f.write("="*60 + "\n")
+            return s
+        except PermissionError:
+            print("Error: Root privileges required. Use sudo.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error creating socket: {e}")
+            sys.exit(1)
+    
+    def format_multi_line(self, prefix, string, size=80):
+        """Format multi-line data display"""
+        size -= len(prefix)
+        if isinstance(string, bytes):
+            string = ''.join(r'\x{:02x}'.format(byte) for byte in string)
+            if size % 2:
+                size -= 1
+        return '\n'.join([prefix + line for line in textwrap.wrap(string, size)])
+    
+    def contains_sensitive_data(self, data):
+        """Check if data contains potentially sensitive information"""
+        if not data:
+            return False
         
-        print(f"✅ Report saved to: {filename}")
+        data_lower = data.lower()
+        for pattern in self.sensitive_patterns:
+            if pattern in data_lower:
+                return True
+        return False
+    
+    def mask_sensitive_data(self, data):
+        """Mask potentially sensitive data"""
+        if not data or len(data) < 8:
+            return "[DATA TOO SHORT OR ENCRYPTED]"
         
-    except Exception as e:
-        print(f"❌ Could not save report: {e}")
+        if self.contains_sensitive_data(data):
+            return "[SENSITIVE DATA - REDACTED FOR ETHICAL REASONS]"
+        
+        # Show first 100 bytes only
+        if len(data) > 100:
+            return data[:100].hex() + "... [TRUNCATED]"
+        
+        return data.hex()
+    
+    def parse_ethernet_frame(self, data):
+        """Parse Ethernet frame"""
+        dest_mac, src_mac, proto = struct.unpack('! 6s 6s H', data[:14])
+        return self.get_mac_addr(dest_mac), self.get_mac_addr(src_mac), socket.htons(proto), data[14:]
+    
+    def get_mac_addr(self, bytes_addr):
+        """Format MAC address"""
+        bytes_str = map('{:02x}'.format, bytes_addr)
+        return ':'.join(bytes_str).upper()
+    
+    def parse_ip_packet(self, data):
+        """Parse IP packet"""
+        version_header_length = data[0]
+        version = version_header_length >> 4
+        header_length = (version_header_length & 15) * 4
+        
+        ttl, proto, src, target = struct.unpack('! 8x B B 2x 4s 4s', data[:20])
+        
+        return version, header_length, ttl, proto, self.ipv4(src), self.ipv4(target), data[header_length:]
+    
+    def ipv4(self, addr):
+        """Format IPv4 address"""
+        return '.'.join(map(str, addr))
+    
+    def parse_tcp_segment(self, data):
+        """Parse TCP segment"""
+        (src_port, dest_port, sequence, acknowledgment, offset_reserved_flags) = struct.unpack('! H H L L H', data[:14])
+        offset = (offset_reserved_flags >> 12) * 4
+        flags = offset_reserved_flags & 0x1FF
+        
+        flag_urg = (flags & 32) >> 5
+        flag_ack = (flags & 16) >> 4
+        flag_psh = (flags & 8) >> 3
+        flag_rst = (flags & 4) >> 2
+        flag_syn = (flags & 2) >> 1
+        flag_fin = flags & 1
+        
+        return src_port, dest_port, sequence, acknowledgment, flag_urg, flag_ack, flag_psh, flag_rst, flag_syn, flag_fin, data[offset:]
+    
+    def parse_udp_segment(self, data):
+        """Parse UDP segment"""
+        src_port, dest_port, length = struct.unpack('! H H 2x H', data[:8])
+        return src_port, dest_port, length, data[8:]
+    
+    def parse_icmp_packet(self, data):
+        """Parse ICMP packet"""
+        icmp_type, code, checksum = struct.unpack('! B B H', data[:4])
+        return icmp_type, code, checksum, data[4:]
+    
+    def display_packet_info(self, timestamp, src_ip, dest_ip, protocol, info, payload=None):
+        """Display formatted packet information"""
+        print(f"\n{'='*60}")
+        print(f"Timestamp: {timestamp}")
+        print(f"Source:      {src_ip}")
+        print(f"Destination: {dest_ip}")
+        print(f"Protocol:    {protocol}")
+        print(f"Info:        {info}")
+        
+        if payload:
+            print(f"\nPayload ({len(payload)} bytes):")
+            print(f"{self.mask_sensitive_data(payload)}")
+    
+    def start_sniffing(self):
+        """Start packet capture"""
+        iface = self.get_interface()
+        if not iface:
+            print("No network interface found!")
+            return
+        
+        print(f"\nStarting capture on interface: {iface}")
+        print(f"Filter: {self.protocol_filter or 'ALL'}")
+        print(f"Packet limit: {self.packet_count} (0 = unlimited)")
+        print("Press Ctrl+C to stop\n")
+        
+        try:
+            # Create socket and bind to interface
+            conn = self.create_socket()
+            if iface:
+                conn.bind((iface, 0))
+        except Exception as e:
+            print(f"Error binding to interface: {e}")
+            return
+        
+        while True:
+            if self.packet_count > 0 and self.captured_count >= self.packet_count:
+                print(f"\nCaptured {self.captured_count} packets. Stopping...")
+                break
+            
+            try:
+                raw_data, addr = conn.recvfrom(65535)
+                self.process_packet(raw_data)
+            except socket.timeout:
+                continue
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"Error receiving packet: {e}")
+                continue
+    
+    def process_packet(self, data):
+        """Process captured packet"""
+        dest_mac, src_mac, eth_proto, data = self.parse_ethernet_frame(data)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        
+        # Ethernet protocol types
+        if eth_proto == 8:  # IPv4
+            version, header_length, ttl, proto, src_ip, dest_ip, data = self.parse_ip_packet(data)
+            
+            # Apply protocol filter
+            if self.protocol_filter:
+                protocol_name = self.get_protocol_name(proto)
+                if self.protocol_filter not in protocol_name.lower():
+                    return
+            
+            info = f"IPv{version}, Header: {header_length} bytes, TTL: {ttl}"
+            
+            # TCP
+            if proto == 6:
+                src_port, dest_port, seq, ack, urg, ack_flag, psh, rst, syn, fin, payload = self.parse_tcp_segment(data)
+                protocol = "TCP"
+                info = f"TCP {src_ip}:{src_port} → {dest_ip}:{dest_port} | "
+                info += f"Flags: "
+                flags = []
+                if urg: flags.append("URG")
+                if ack_flag: flags.append("ACK")
+                if psh: flags.append("PSH")
+                if rst: flags.append("RST")
+                if syn: flags.append("SYN")
+                if fin: flags.append("FIN")
+                info += '/'.join(flags) if flags else "None"
+                info += f" | Seq: {seq}, Ack: {ack}"
+                
+                self.display_packet_info(timestamp, f"{src_ip}:{src_port}", 
+                                       f"{dest_ip}:{dest_port}", protocol, info, payload)
+            
+            # UDP
+            elif proto == 17:
+                src_port, dest_port, length, payload = self.parse_udp_segment(data)
+                protocol = "UDP"
+                info = f"UDP {src_ip}:{src_port} → {dest_ip}:{dest_port} | Length: {length}"
+                self.display_packet_info(timestamp, f"{src_ip}:{src_port}", 
+                                       f"{dest_ip}:{dest_port}", protocol, info, payload)
+            
+            # ICMP
+            elif proto == 1:
+                icmp_type, code, checksum, payload = self.parse_icmp_packet(data)
+                protocol = "ICMP"
+                info = f"ICMP Type: {icmp_type}, Code: {code}, Checksum: {checksum}"
+                self.display_packet_info(timestamp, src_ip, dest_ip, protocol, info, payload)
+            
+            # Other IP protocols
+            else:
+                protocol = self.get_protocol_name(proto)
+                info = f"{protocol} Protocol"
+                self.display_packet_info(timestamp, src_ip, dest_ip, protocol, info, data[:100])
+            
+            self.captured_count += 1
+        
+        # ARP or other Ethernet protocols
+        elif eth_proto == 2054:  # ARP
+            if not self.protocol_filter or self.protocol_filter == 'arp':
+                protocol = "ARP"
+                info = f"ARP {src_mac} → {dest_mac}"
+                self.display_packet_info(timestamp, src_mac, dest_mac, protocol, info)
+                self.captured_count += 1
+        
+        # Other Ethernet frames
+        else:
+            if not self.protocol_filter:
+                protocol = f"Ethernet 0x{eth_proto:04x}"
+                info = f"Frame {src_mac} → {dest_mac}"
+                self.display_packet_info(timestamp, src_mac, dest_mac, protocol, info)
+                self.captured_count += 1
+    
+    def get_protocol_name(self, proto_num):
+        """Get protocol name from number"""
+        protocols = {
+            1: "ICMP", 6: "TCP", 17: "UDP",
+            2: "IGMP", 88: "EIGRP", 89: "OSPF"
+        }
+        return protocols.get(proto_num, f"Unknown ({proto_num})")
 
-# ============================================================================
-# SECTION 6: PROGRAM ENTRY POINT
-# ============================================================================
+def main():
+    parser = argparse.ArgumentParser(
+        description="Educational Packet Sniffer - For authorized use only",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                    # Sniff all protocols
+  %(prog)s --interface eth0   # Sniff on specific interface
+  %(prog)s --filter tcp       # Sniff only TCP packets
+  %(prog)s --count 20         # Capture 20 packets and exit
+  
+WARNING: This tool is for educational purposes only.
+         Only use on networks you own or have permission to monitor.
+        """
+    )
+    
+    parser.add_argument("--interface", "-i", help="Network interface to sniff on")
+    parser.add_argument("--filter", "-f", help="Filter by protocol (tcp, udp, icmp, arp)")
+    parser.add_argument("--count", "-c", type=int, default=50, 
+                       help="Number of packets to capture (0 = unlimited)")
+    
+    args = parser.parse_args()
+    
+    # Display ethical warning
+    display_ethical_warning()
+    
+    # Create and start sniffer
+    sniffer = EthicalPacketSniffer(
+        interface=args.interface,
+        protocol_filter=args.filter,
+        packet_count=args.count
+    )
+    
+    sniffer.start_sniffing()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\n👋 Goodbye!")
-    except Exception as e:
-        print(f"\n❌ Critical error: {e}")
-        print("Please check your Python installation.")
+    # Check if running with sudo/root
+    if os.geteuid() != 0:
+        print("This program requires root privileges. Please run with sudo.")
+        sys.exit(1)
+    
+    main()
